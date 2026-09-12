@@ -1,17 +1,38 @@
-// Tell Node.js to ignore SSL certificate validation errors (Fixes the "unable to verify" error)
+// Tell Node.js to ignore SSL certificate validation errors
 process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
 
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
 module.exports = async function handler(req, res) {
+  // 1. Safely and strictly extract the target URL
+  // We read the raw req.url and grab everything after "url=" 
+  // This prevents the link from being broken if it contains raw "&" or "?" symbols.
+  let targetUrl = '';
+  const urlParamIndex = req.url.indexOf('url=');
+  
+  if (urlParamIndex !== -1) {
+    targetUrl = req.url.substring(urlParamIndex + 4);
+    
+    // In case the URL was properly encoded by a frontend app, we decode it back to normal
+    try {
+      targetUrl = decodeURIComponent(targetUrl);
+    } catch (e) {
+      // If it fails, it means it wasn't encoded, which is fine! Leave it as is.
+    }
+  }
+
+  // 2. Check if a URL was provided
+  if (!targetUrl) {
+    return res.status(400).json({
+      success: false,
+      error: 'Please provide a URL parameter. Example: /api/test?url=https://jiotvmblive.cdn.jio.com/...'
+    });
+  }
+
   // Your ScraperAPI Key
   const API_KEY = '514940881e9968883118656858b1caab';
 
-  // Your JioTV CDN URL
-  const targetUrl = 'https://jiotvmblive.cdn.jio.com/bpk-tv/CNBCTV18Prime_MOB/WDVLive/index.mpd?__hdnea__=st=1789205404~exp=1789227004~acl=/*~hmac=1b0f457c00d7eb3f17166dca4c0a94b3537c4253ff7a2e36ed24624baf8a22fb';
-
-  // Configure the proxy agent to also ignore unauthorized SSL certificates
   const proxyUrl = `http://scraperapi:${API_KEY}@proxy-server.scraperapi.com:8001`;
   const proxyAgent = new HttpsProxyAgent(proxyUrl, {
     rejectUnauthorized: false 
@@ -33,9 +54,10 @@ module.exports = async function handler(req, res) {
     // Destroy the stream so the .mpd file isn't downloaded
     response.data.destroy();
 
-    // Send the successful headers back to your screen
+    // Send the successful headers back
     return res.status(200).json({
       success: true,
+      target_requested: targetUrl, // Prints the requested URL so you can verify it wasn't cut off
       statusCode: response.status,
       headers: response.headers
     });
@@ -48,12 +70,14 @@ module.exports = async function handler(req, res) {
       return res.status(200).json({
         success: true,
         message: "Target Redirected",
+        target_requested: targetUrl,
         statusCode: error.response.status,
         headers: error.response.headers
       });
     } else {
       return res.status(500).json({
         success: false,
+        target_requested: targetUrl,
         error: error.message
       });
     }

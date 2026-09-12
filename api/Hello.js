@@ -1,46 +1,62 @@
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
-async function grabHeadersWithYourKey() {
-  // Your specific ScraperAPI Key
+// Vercel Serverless Function Handler
+module.exports = async function handler(req, res) {
+  // Your ScraperAPI Key
   const API_KEY = '514940881e9968883118656858b1caab';
 
-  // The Target URL you want to get headers from
-  const targetUrl = 'https://jiotvmblive.cdn.jio.com/bpk-tv/CNBCTV18Prime_MOB/WDVLive/index.mpd?__hdnea__=st=1789205404~exp=1789227004~acl=/*~hmac=1b0f457c00d7eb3f17166dca4c0a94b3537c4253ff7a2e36ed24624baf8a22fb'; // <-- CHANGE THIS TO YOUR LINK
+  // Your JioTV CDN URL
+  const targetUrl = 'https://jiotvmblive.cdn.jio.com/bpk-tv/CNBCTV18Prime_MOB/WDVLive/index.mpd?__hdnea__=st=1789205404~exp=1789227004~acl=/*~hmac=1b0f457c00d7eb3f17166dca4c0a94b3537c4253ff7a2e36ed24624baf8a22fb';
 
-  // Setup the Proxy Agent using your key as the password
   const proxyUrl = `http://scraperapi:${API_KEY}@proxy-server.scraperapi.com:8001`;
   const proxyAgent = new HttpsProxyAgent(proxyUrl);
 
-  console.log(`Connecting to ${targetUrl} via Indian Proxy...`);
-
   try {
+    // We use axios.get but tell it we only want a 'stream'. 
+    // This allows us to grab headers and immediately destroy the connection 
+    // so it DOES NOT download the .mpd file body.
     const response = await axios.get(targetUrl, {
       httpsAgent: proxyAgent,
-      proxy: false, // Disables Axios's default proxy routing so HttpsProxyAgent works
-      maxRedirects: 0, // Stops redirects so you can capture 'Location' headers
+      proxy: false,
+      maxRedirects: 0,
+      responseType: 'stream', // Tells Axios not to download the whole file automatically
       headers: {
-        'x-sapi-country_code': 'in', // Force India IP
-        'x-sapi-keep_headers': 'true' // Preserve the original response headers
+        'x-sapi-country_code': 'in',
+        'x-sapi-keep_headers': 'true',
+        // Jio CDNs often block requests without a standard User-Agent
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36'
       }
     });
 
-    console.log("✅ Request Successful!");
-    console.log("Status Code:", response.status);
-    console.log("Original Headers:", response.headers);
+    // We got the headers! Now destroy the stream so the .mpd body isn't downloaded.
+    response.data.destroy();
+
+    // Send the headers back to your browser screen as clean JSON
+    return res.status(200).json({
+      success: true,
+      statusCode: response.status,
+      headers: response.headers
+    });
 
   } catch (error) {
-    // If the target site does a 301/302 redirect, it triggers this catch block
-    // because we set maxRedirects to 0. We still want those headers!
+    // Handle redirects or errors safely
     if (error.response) {
-      console.log("⚠️ Target Redirected (Expected if maxRedirects=0)");
-      console.log("Redirect Status:", error.response.status);
-      console.log("Redirect Headers:", error.response.headers);
+      // If it redirects, the stream is in error.response, destroy it too
+      if (error.response.data && typeof error.response.data.destroy === 'function') {
+        error.response.data.destroy();
+      }
+      return res.status(200).json({
+        success: true,
+        message: "Target Redirected",
+        statusCode: error.response.status,
+        headers: error.response.headers
+      });
     } else {
-      console.error("❌ Proxy or Network Error:", error.message);
+      return res.status(500).json({
+        success: false,
+        error: error.message
+      });
     }
   }
-}
-
-// Run the function
-grabHeadersWithYourKey();
+};

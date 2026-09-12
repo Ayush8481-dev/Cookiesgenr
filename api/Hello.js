@@ -6,7 +6,7 @@ async function grabHeadersWithYourKey() {
   const API_KEY = '514940881e9968883118656858b1caab';
 
   // The Target URL you want to get headers from
-  const targetUrl = 'https://your-target-link-here.com'; // <-- CHANGE THIS TO YOUR LINK
+  const targetUrl = 'https://jiotvmblive.cdn.jio.com/bpk-tv/CNBCTV18Prime_MOB/WDVLive/index.mpd?__hdnea__=st=1789205404~exp=1789227004~acl=/*~hmac=1b0f457c00d7eb3f17166dca4c0a94b3537c4253ff7a2e36ed24624baf8a22fb'; // <-- CHANGE THIS TO YOUR LINK
 
   // Setup the Proxy Agent using your key as the password
   const proxyUrl = `http://scraperapi:${API_KEY}@proxy-server.scraperapi.com:8001`;

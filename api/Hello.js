@@ -1,28 +1,21 @@
-// Tell Node.js to ignore SSL certificate validation errors
-process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
-
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
 module.exports = async function handler(req, res) {
-  // 1. Safely and strictly extract the target URL
-  // We read the raw req.url and grab everything after "url=" 
-  // This prevents the link from being broken if it contains raw "&" or "?" symbols.
+  // 1. Safely extract the target URL
   let targetUrl = '';
   const urlParamIndex = req.url.indexOf('url=');
   
   if (urlParamIndex !== -1) {
     targetUrl = req.url.substring(urlParamIndex + 4);
-    
-    // In case the URL was properly encoded by a frontend app, we decode it back to normal
     try {
       targetUrl = decodeURIComponent(targetUrl);
     } catch (e) {
-      // If it fails, it means it wasn't encoded, which is fine! Leave it as is.
+      // If decode fails, leave it as is
     }
   }
 
-  // 2. Check if a URL was provided
+  // 2. Check if URL is provided
   if (!targetUrl) {
     return res.status(400).json({
       success: false,
@@ -30,20 +23,50 @@ module.exports = async function handler(req, res) {
     });
   }
 
-  // Your ScraperAPI Key
-  const API_KEY = '514940881e9968883118656858b1caab';
+  // 3. SECURITY: Strict Domain Whitelist (jio.com and its subdomains ONLY)
+  try {
+    const parsedUrl = new URL(targetUrl);
+    const hostname = parsedUrl.hostname.toLowerCase();
+    
+    // Allows exactly "jio.com" OR anything ending in ".jio.com" (like "cdn.jio.com")
+    // This prevents tricks like "fakejio.com" which doesn't have the dot.
+    const isAllowed = hostname === 'jio.com' || hostname.endsWith('.jio.com');
+    
+    if (!isAllowed) {
+      return res.status(403).json({
+        success: false,
+        error: 'Proxy request denied. Only jio.com and its subdomains are allowed.'
+      });
+    }
+  } catch (error) {
+    return res.status(400).json({
+      success: false,
+      error: 'Invalid URL format provided.'
+    });
+  }
+
+  // 4. SECURITY: Read API key from Environment Variables
+  const API_KEY = process.env.SCRAPER_API_KEY;
+  
+  if (!API_KEY) {
+    return res.status(500).json({
+      success: false,
+      error: 'Server misconfiguration: API key is missing from environment variables.'
+    });
+  }
 
   const proxyUrl = `http://scraperapi:${API_KEY}@proxy-server.scraperapi.com:8001`;
   const proxyAgent = new HttpsProxyAgent(proxyUrl, {
-    rejectUnauthorized: false 
+    rejectUnauthorized: false // Safely bypasses SSL ONLY for the proxy connection
   });
 
+  // 5. Execute the Proxy Request
   try {
     const response = await axios.get(targetUrl, {
       httpsAgent: proxyAgent,
-      proxy: false,
-      maxRedirects: 0,
-      responseType: 'stream', // Tells Axios to only grab headers, not the file body
+      proxy: false, // Prevents Axios from auto-detecting system proxies
+      maxRedirects: 0, // Intercept redirects instead of following them
+      responseType: 'stream', // Fetch headers only, prepare to stream body
       headers: {
         'x-sapi-country_code': 'in',
         'x-sapi-keep_headers': 'true',
@@ -51,18 +74,19 @@ module.exports = async function handler(req, res) {
       }
     });
 
-    // Destroy the stream so the .mpd file isn't downloaded
+    // Destroy the stream immediately so the media/file is not downloaded
     response.data.destroy();
 
-    // Send the successful headers back
+    // Send successful headers back
     return res.status(200).json({
       success: true,
-      target_requested: targetUrl, // Prints the requested URL so you can verify it wasn't cut off
+      target_requested: targetUrl,
       statusCode: response.status,
       headers: response.headers
     });
 
   } catch (error) {
+    // Handle 301/302 Redirects (Expected behavior for extracting redirect links)
     if (error.response) {
       if (error.response.data && typeof error.response.data.destroy === 'function') {
         error.response.data.destroy();
@@ -75,6 +99,7 @@ module.exports = async function handler(req, res) {
         headers: error.response.headers
       });
     } else {
+      // Handle Network/Timeout/ScraperAPI errors
       return res.status(500).json({
         success: false,
         target_requested: targetUrl,

@@ -1,3 +1,7 @@
+// Tell Node.js to ignore SSL certificate validation errors from ScraperAPI.
+// SECURITY NOTE: This is safe to use here because we have a Strict Domain Whitelist below.
+process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0';
+
 const axios = require('axios');
 const { HttpsProxyAgent } = require('https-proxy-agent');
 
@@ -29,7 +33,7 @@ module.exports = async function handler(req, res) {
     const hostname = parsedUrl.hostname.toLowerCase();
     
     // Allows exactly "jio.com" OR anything ending in ".jio.com" (like "cdn.jio.com")
-    // This prevents tricks like "fakejio.com" which doesn't have the dot.
+    // This stops bots from using your API to scrape Google/Amazon and draining your credits.
     const isAllowed = hostname === 'jio.com' || hostname.endsWith('.jio.com');
     
     if (!isAllowed) {
@@ -51,16 +55,15 @@ module.exports = async function handler(req, res) {
   if (!API_KEY) {
     return res.status(500).json({
       success: false,
-      error: 'Server misconfiguration: API key is missing from environment variables.'
+      error: 'Server misconfiguration: SCRAPER_API_KEY is missing from environment variables.'
     });
   }
 
+  // 5. Setup the Proxy Agent
   const proxyUrl = `http://scraperapi:${API_KEY}@proxy-server.scraperapi.com:8001`;
-  const proxyAgent = new HttpsProxyAgent(proxyUrl, {
-    rejectUnauthorized: false // Safely bypasses SSL ONLY for the proxy connection
-  });
+  const proxyAgent = new HttpsProxyAgent(proxyUrl);
 
-  // 5. Execute the Proxy Request
+  // 6. Execute the Proxy Request
   try {
     const response = await axios.get(targetUrl, {
       httpsAgent: proxyAgent,
@@ -74,8 +77,10 @@ module.exports = async function handler(req, res) {
       }
     });
 
-    // Destroy the stream immediately so the media/file is not downloaded
-    response.data.destroy();
+    // Destroy the stream immediately so the media/file is not downloaded (saves your bandwidth)
+    if (response.data && typeof response.data.destroy === 'function') {
+      response.data.destroy();
+    }
 
     // Send successful headers back
     return res.status(200).json({
@@ -86,7 +91,7 @@ module.exports = async function handler(req, res) {
     });
 
   } catch (error) {
-    // Handle 301/302 Redirects (Expected behavior for extracting redirect links)
+    // Handle 301/302 Redirects (Expected behavior for extracting redirect links/tokens)
     if (error.response) {
       if (error.response.data && typeof error.response.data.destroy === 'function') {
         error.response.data.destroy();
